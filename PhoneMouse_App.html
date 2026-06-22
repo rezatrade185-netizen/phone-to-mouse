@@ -395,7 +395,6 @@
         <div class="kb-key" onclick="sendKey('j')">j</div>
         <div class="kb-key" onclick="sendKey('k')">k</div>
         <div class="kb-key" onclick="sendKey('l')">l</div>
-        <div class="kb-key special" onclick="sendKey('Return')">↵</div>
       </div>
       <!-- row 5 -->
       <div class="kb-row">
@@ -410,7 +409,7 @@
         <div class="kb-key" onclick="sendKey('comma')">,</div>
         <div class="kb-key" onclick="sendKey('period')">.</div>
       </div>
-      <!-- row 6 shortcuts -->
+      <!-- row 6 shortcuts + enter -->
       <div class="kb-row">
         <div class="kb-key special" onclick="sendHotkey('ctrl','c')">Copy</div>
         <div class="kb-key special" onclick="sendHotkey('ctrl','v')">Paste</div>
@@ -418,6 +417,15 @@
         <div class="kb-key space" onclick="sendKey('space')">فاصله</div>
         <div class="kb-key special" onclick="sendKey('Left')">←</div>
         <div class="kb-key special" onclick="sendKey('Right')">→</div>
+      </div>
+      <!-- row 7: Enter بزرگ -->
+      <div class="kb-row">
+        <div class="kb-key special" onclick="sendKey('Up')">↑</div>
+        <div class="kb-key special" onclick="sendKey('Down')">↓</div>
+        <div class="kb-key special" onclick="sendKey('Home')">Home</div>
+        <div class="kb-key special" onclick="sendKey('End')">End</div>
+        <div class="kb-key special" onclick="sendKey('Delete')">Del</div>
+        <div class="kb-key special" onclick="sendKey('Return')" style="flex:2;max-width:999px;background:var(--accent-dim);border-color:var(--accent);color:var(--text);font-size:16px">↵ Enter</div>
       </div>
     </div>
   </div>
@@ -576,13 +584,36 @@
     setTimeout(()=>r.remove(),400);
   });
 
+  // به جای فرستادن یه درخواست جدا برای هر pointermove (که باعث صف شدن و
+  // رسیدن نامرتب درخواست‌ها و در نتیجه «پرش/قاطی شدن» موس می‌شد)،
+  // دلتاها رو جمع می‌کنیم و با یه تایمر کوتاه و به‌ترتیب (نه همزمان) می‌فرستیم.
+  let pendingDx=0, pendingDy=0, moveInFlight=false, moveTimer=null;
+
+  function flushMove(){
+    moveTimer=null;
+    if(pendingDx===0 && pendingDy===0) return;
+    const dx=pendingDx, dy=pendingDy;
+    pendingDx=0; pendingDy=0;
+    if(moveInFlight) { scheduleFlush(); return; } // یکی در حال ارسال، صبر کن
+    moveInFlight=true;
+    if(!window._serverBase){ moveInFlight=false; return; }
+    fetch(`${window._serverBase}/cmd`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'move',dx:Math.round(dx),dy:Math.round(dy)})})
+      .catch(()=>{})
+      .finally(()=>{ moveInFlight=false; if(pendingDx!==0||pendingDy!==0) scheduleFlush(); });
+  }
+  function scheduleFlush(){
+    if(moveTimer) return;
+    moveTimer=setTimeout(flushMove,16); // ~60 بار در ثانیه، ولی به ترتیب
+  }
+
   touchpad.addEventListener('pointermove',e=>{
     if(!isEnabled||!touching)return;
     e.preventDefault();
     const dx=(e.clientX-lastX)*sensitivity;
     const dy=(e.clientY-lastY)*sensitivity;
     lastX=e.clientX; lastY=e.clientY;
-    if(Math.abs(dx)>.3||Math.abs(dy)>.3) sendCmd('move',{dx:Math.round(dx),dy:Math.round(dy)});
+    pendingDx+=dx; pendingDy+=dy;
+    scheduleFlush();
   });
 
   // دو انگشتی اسکرول
@@ -597,8 +628,8 @@
   },{passive:false});
 
   touchpad.addEventListener('touchstart',e=>{ touches=[e.touches[0]?.clientY]; });
-  touchpad.addEventListener('pointerup',()=>{touching=false;});
-  touchpad.addEventListener('pointercancel',()=>{touching=false;});
+  touchpad.addEventListener('pointerup',()=>{touching=false; pendingDx=0; pendingDy=0;});
+  touchpad.addEventListener('pointercancel',()=>{touching=false; pendingDx=0; pendingDy=0;});
 
   // ===== KEYBOARD =====
   function sendKey(key){
